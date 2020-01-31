@@ -1,40 +1,62 @@
 #!/bin/sh
 
 if [ "$1" != "" ]; then
-  AWSTATS_DOWNLOAD=$1
+  AWSTATS_DOWNLOAD="$1"
 else
   # set this to the (latest) available version you want:
-  AWSTATS_DOWNLOAD=awstats-7.6-1.noarch
+  AWSTATS_DOWNLOAD="awstats-7.7-1.noarch.rpm"
 fi
 SKIP_PKG_INSTALL=false
-AWSTATS_APACHE2=/etc/apache2/conf-available/awstats.conf
+SKIP_PKG_CONVERT=false
+SKIP_CONFIG=false
 AWSTATS_CRON=/etc/cron.d/awstats
 AWSTATS_DEFAULT=/etc/default/awstats
 AWSTATS_LOGROTATE=/etc/logrotate.d/httpd-prerotate/awstats/prerotate.sh
 AWSTATS_TOOLS=/usr/local/awstats/tools
+AWSTATS_APACHE2=/etc/apache2/conf-available/awstats.conf
 
-if [ $( id -u ) -ne 0 ]; then
-  echo "please run this script as root"
+if [ "$( id -u )" -ne 0 ]; then
+  echo "Please run this script as root"
   exit 1
 fi
-if [ ! -f $AWSTATS_DOWNLOAD.rpm ]; then
-  wget https://prdownloads.sourceforge.net/awstats/$AWSTATS_DOWNLOAD.rpm
-fi
-dpkg -l alien >/dev/null 2>&1
-if [ $? -ne 0 ]; then
-  echo "please install \"alien\" package first using \"apt install alien\""
-  echo "it is needed to convert awstats pkg from .rpm to .deb"
+if [ -z "$AWSTATS_DOWNLOAD" ]; then
+  echo "Error: missing setting \$AWSTATS_DOWNLOAD, exiting ..."
   exit 1
 fi
-if [ ! "$SKIP_PKG_INSTALL" = "true" ]; then
-  alien -d -i $AWSTATS_DOWNLOAD.rpm
-  if [ $? -ne 0 ]; then
-    echo "installing/converting $AWSTATS_DOWNLOAD.rpm to .deb failed"
+if ! echo "$AWSTATS_DOWNLOAD" | grep -q ".rpm$"; then
+  AWSTATS_DOWNLOAD="$AWSTATS_DOWNLOAD.rpm"
+fi
+if [ ! -f $AWSTATS_DOWNLOAD ]; then
+  wget "https://prdownloads.sourceforge.net/awstats/${AWSTATS_DOWNLOAD}" || \
+    { echo "Error: could not download \"$AWSTATS_DOWNLOAD\", exiting..."; exit 1 ;}
+fi
+if [ "$SKIP_PKG_CONVERT" = "true" ]; then
+  echo "Skipping package convertion"
+else
+  if ! dpkg -s alien >/dev/null 2>&1; then
+    echo "Please install \"alien\" first using \"apt install alien\""
+    echo "It is needed to convert the awstats rpm package to .deb format"
     exit 1
-  fi 
+  fi
+  if [ "$SKIP_PKG_INSTALL" = "true" ]; then
+    echo "Skipping package install"
+    if ! alien -d "$AWSTATS_DOWNLOAD"; then
+      echo "Converting $AWSTATS_DOWNLOAD to .deb failed, exiting..."
+      exit 1
+    fi
+  else
+    if ! alien -d -i "$AWSTATS_DOWNLOAD"; then
+      echo "Installing/converting $AWSTATS_DOWNLOAD to .deb failed, exiting..."
+      exit 1
+    fi
+  fi
+fi
+if [ "$SKIP_CONFIG" = "true" ]; then
+  echo "Skipping configuration, exiting..."
+  exit 0
 fi
 
-if [ -f $AWSTATS_CRON ]; then
+if [ -f "$AWSTATS_CRON" ]; then
 cat <<'_EOF_' > $AWSTATS_CRON
 MAILTO=root
 
@@ -44,20 +66,21 @@ MAILTO=root
 10 03 * * * root [ -x /usr/local/awstats/tools/buildstatic.sh ] && /usr/local/awstats/tools/buildstatic.sh
 _EOF_
 else
-  if [ ! -f ${AWSTATS_CRON}_awconv.bak ]; then
+  if [ ! -f "${AWSTATS_CRON}_awconv.bak" ]; then
     sed -i_awconv.bak -e 's@/usr/share/awstats/@/usr/local/awstats/@g' \
                       -e "s/www-data/root/g" $AWSTATS_CRON
   fi
 fi
 echo
-echo "changed cron to run as root instead of www-data because apache logs are usually owned by root:adm"
-echo
-echo "this can be reverted by moving ${AWSTATS_CRON}_awconv.bak to ${AWSTATS_CRON}"
-echo "if you decide to do this you probably want to change permissions of the apache log files"
+echo "Changed cron to run as root instead of www-data because webserver logs are usually owned by root:adm"
+if [ -f "${AWSTATS_CRON}_awconv.bak" ]; then
+  echo "This can be reverted by moving ${AWSTATS_CRON}_awconv.bak to ${AWSTATS_CRON}"
+fi
+echo "If you want to cron as www-data you probably want to change permissions of your webservers log files"
 echo
 
-if [ ! -f $AWSTATS_DEFAULT ]; then
-cat <<'_EOF_' > $AWSTATS_DEFAULT
+if [ ! -f "$AWSTATS_DEFAULT" ]; then
+cat <<'_EOF_' > "$AWSTATS_DEFAULT"
 # AWStats configuration options
 
 # This variable controls the scheduling priority for updating AWStats
@@ -80,24 +103,24 @@ AWSTATS_ENABLE_CRONTABS="yes"
 _EOF_
 fi
 
-if [ ! -f $AWSTATS_LOGROTATE ]; then
-cat <<'_EOF_' > $AWSTATS_LOGROTATE
+if [ ! -f "$AWSTATS_LOGROTATE" ]; then
+cat <<'_EOF_' > "$AWSTATS_LOGROTATE"
 #!/bin/sh
 UPDATE_SCRIPT=/usr/local/awstats/tools/update.sh
-if [ -x $UPDATE_SCRIPT ]
+if [ -x "$UPDATE_SCRIPT" ]
 then
-  su -l -c $UPDATE_SCRIPT www-data
+  su -l -c "$UPDATE_SCRIPT" www-data
 fi
 _EOF_
-chmod 755 $AWSTATS_LOGROTATE
+chmod 755 "$AWSTATS_LOGROTATE"
 else
-  if [ ! -f ${AWSTATS_APACHE2}_awconv.bak ]; then
+  if [ ! -f "${AWSTATS_LOGROTATE}_awconv.bak" ]; then
     sed -i_awconv.bak 's@/usr/share/awstats/@/usr/local/awstats/@g' $AWSTATS_LOGROTATE
   fi
 fi
 
-if [ ! -f $AWSTATS_TOOLS/buildstatic.sh ]; then
-cat <<'_EOF_' > $AWSTATS_TOOLS/buildstatic.sh
+if [ ! -f "$AWSTATS_TOOLS/buildstatic.sh" ]; then
+cat <<'_EOF_' > "$AWSTATS_TOOLS/buildstatic.sh"
 #!/bin/sh
 ##
 ## buildstatic.sh, written by Sergey B Kirpichev <skirpichev@gmail.com>
@@ -151,11 +174,11 @@ do
   fi
 done
 _EOF_
-chmod 755 $AWSTATS_TOOLS/buildstatic.sh
+chmod 755 "$AWSTATS_TOOLS/buildstatic.sh"
 fi
 
-if [ ! -f $AWSTATS_TOOLS/update.sh ]; then
-cat <<'_EOF_' > $AWSTATS_TOOLS/update.sh
+if [ ! -f "$AWSTATS_TOOLS/update.sh" ]; then
+cat <<'_EOF_' > "$AWSTATS_TOOLS/update.sh"
 #!/bin/sh
 ##
 ## update.sh, written by Sergey B Kirpichev <skirpichev@gmail.com>
@@ -196,11 +219,19 @@ do
   fi
 done
 _EOF_
-chmod 755 $AWSTATS_TOOLS/update.sh
+chmod 755 "$AWSTATS_TOOLS/update.sh"
 fi
 
-if [ ! -f $AWSTATS_APACHE2 ]; then
-cat <<'_EOF_' > $AWSTATS_APACHE2
+if [ -f /etc/awstats/awstats.model.conf ]; then gzip /etc/awstats/awstats.model.conf; fi
+
+if ! dpkg -s apache2 >/dev/null 2>&1; then
+  echo "Apache2 package not installed, skipping configuration and service reload"
+  echo "Make sure to configure your webserver for AWStats"
+  exit 0
+fi
+
+if [ ! -f "$AWSTATS_APACHE2" ]; then
+cat <<'_EOF_' > "$AWSTATS_APACHE2"
 #
 # Directives to allow use of AWStats as a CGI
 #
@@ -253,15 +284,17 @@ Alias /awstatsclasses/ /usr/share/awstats/wwwroot/classes/
 ScriptAlias /awstats/ /usr/local/awstats/wwwroot/cgi-bin/
 _EOF_
 else
-  if [ ! -f ${AWSTATS_APACHE2}_awconv.bak ]; then
+  if [ ! -f "${AWSTATS_APACHE2}_awconv.bak" ]; then
     sed -i_awconv.bak -e 's@<Directory /usr/share/awstats/icon>@<Directory /usr/local/awstats/wwwroot/icon>@' \
                       -e 's@<Directory /usr/share/java/awstats>@<Directory /usr/local/awstats/wwwroot/classes>@g' \
                       -e 's@<Directory /var/www/html/awstats>@<Directory /usr/local/awstats/wwwroot>@g' \
                       -e 's@Alias /awstats-icon/ /usr/share/awstats/icon/@Alias /awstats-icon/ /usr/local/awstats/wwwroot/icon/@g' \
                       -e 's@Alias /awstatsclasses/ /usr/share/java/awstats/@Alias /awstatsclasses/ /usr/local/awstats/wwwroot/classes/@g' \
                       -e 's@ScriptAlias /awstats/ /usr/lib/cgi-bin/@ScriptAlias /awstats/ /usr/local/awstats/wwwroot/cgi-bin/@g' \
-    $AWSTATS_APACHE2 && a2enconf awstats
+    "$AWSTATS_APACHE2" && {
+      a2enconf awstats || echo "Error: running a2enconf awstats failed" && {
+        service apache2 reload || echo "Error: could not reload apache2 service"
+      }
+    }
   fi
 fi
-service apache2 reload
-if [ -f /etc/awstats/awstats.model.conf ]; then gzip /etc/awstats/awstats.model.conf; fi
