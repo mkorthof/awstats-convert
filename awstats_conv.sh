@@ -14,6 +14,7 @@ AWSTATS_DEFAULT=/etc/default/awstats
 AWSTATS_LOGROTATE=/etc/logrotate.d/httpd-prerotate/awstats/prerotate.sh
 AWSTATS_TOOLS=/usr/local/awstats/tools
 AWSTATS_APACHE2=/etc/apache2/conf-available/awstats.conf
+AWSTATS_LIGHTY=/etc/lighttpd/conf-available/10-cgi.conf
 
 if [ "$( id -u )" -ne 0 ]; then
   echo "Please run this script as root"
@@ -224,13 +225,8 @@ fi
 
 if [ -f /etc/awstats/awstats.model.conf ]; then gzip /etc/awstats/awstats.model.conf; fi
 
-if ! dpkg -s apache2 >/dev/null 2>&1; then
-  echo "Apache2 package not installed, skipping configuration and service reload"
-  echo "Make sure to configure your webserver for AWStats"
-  exit 0
-fi
-
-if [ ! -f "$AWSTATS_APACHE2" ]; then
+if dpkg -s apache2 >/dev/null 2>&1; then
+  if [ ! -f "$AWSTATS_APACHE2" ]; then
 cat <<'_EOF_' > "$AWSTATS_APACHE2"
 #
 # Directives to allow use of AWStats as a CGI
@@ -297,4 +293,20 @@ else
       }
     }
   fi
+fi
+elif dpkg -s lighttpd >/dev/null 2>&1; then
+  if [ ! -f "${AWSTATS_LIGHTY}_awconv.bak" ]; then
+    sed -i_awconv.bak -e 's@"/awstatsclasses/" => "/usr/share/java/awstats/"@"/awstatsclasses/" => "/usr/local/awstats/wwwroot/classes/"@g' \
+                      -e 's@"/awstatscss/" => "/usr/share/doc/awstats/examples/css/"@"/awstatscss/" => "/usr/local/awstats/wwwroot/css/"@g' \
+                      -e 's@"/awstatsicons/" => "/usr/share/awstats/icon/"@"/awstatsicons/" => "/usr/local/awstats/wwwroot/icon/"@' \
+                      -e 's@"/awstats-icon/" => "/usr/share/awstats/icon/"@"/awstats-icon/" => "/usr/local/awstats/wwwroot/icon/"@g' \
+                      -e 's@"/awstats/" => "/usr/lib/cgi-bin/"@"/awstats/" => "/usr/local/awstats/wwwroot/cgi-bin/"@g' \
+                      -e 's@"/icon/" => "/usr/share/awstats/icon/"@"/icon/" => "/usr/local/awstats/wwwroot/icon/"@g' \
+                      -e 's@"/cgi-bin/" => "/usr/lib/cgi-bin/"@"/cgi-bin/" => "/usr/local/awstats/wwwroot/cgi-bin/"@g' \
+    "$AWSTATS_LIGHTY" && {
+      service lighttpd reload || echo "Error: could not reload lighttpd service"
+    }     
+  fi
+else
+  echo "Make sure to configure your webserver for AWStats"
 fi
